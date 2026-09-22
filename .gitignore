@@ -19,7 +19,7 @@ mono_crash.*
 
 # Build results
 [Dd]ebug/
-[Dd]ebugPublic/
+[Dd]ebugPublic/packa
 [Rr]elease/
 [Rr]eleases/
 
@@ -223,6 +223,7 @@ publish/
 PublishScripts/
 
 # NuGet Packages
+packages/
 *.nupkg
 # NuGet Symbol Packages
 *.snupkg
@@ -427,3 +428,8 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+
+# Real credentials/settings - copy Secrets.example.cs to Secrets.cs in each
+# project and fill in real values. Secrets.cs is intentionally excluded here.
+Secrets.cs
