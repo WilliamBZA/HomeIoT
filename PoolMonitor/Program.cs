@@ -38,8 +38,8 @@ namespace PoolMonitor
         // offset from UTC. South Africa Standard Time does not observe daylight saving.
         private const int UtcOffsetHours = 2;
 
-        private const string DefaultPoolPumpOnTime = "11:00:00";
-        private const string DefaultPoolPumpOffTime = "13:00:00";
+        private static readonly TimeSpan DefaultPoolPumpOnTime = new TimeSpan(11, 0, 0);
+        private static readonly TimeSpan DefaultPoolPumpOffTime = new TimeSpan(13, 0, 0);
         private const int ScheduleCheckIntervalMs = 20_000;
 
         private static HomeAssistantClient _homeAssistant;
@@ -230,8 +230,8 @@ namespace PoolMonitor
 
         private static void RunPoolPumpScheduleTick(bool enforceCurrentWindow)
         {
-            if (!HomeAssistantTime.TryParse(_poolPumpOnTime.State, out int onHour, out int onMinute)
-                || !HomeAssistantTime.TryParse(_poolPumpOffTime.State, out int offHour, out int offMinute))
+            if (!TryParseScheduleTime(_poolPumpOnTime.State, out int onHour, out int onMinute)
+                || !TryParseScheduleTime(_poolPumpOffTime.State, out int offHour, out int offMinute))
             {
                 return;
             }
@@ -398,7 +398,7 @@ namespace PoolMonitor
                     // Retained-state resync after a (re)connect: see PublishAllState. Only updates
                     // the in-memory value, doesn't re-publish, so this can't loop.
                     HomeAssistantTime target = topic == _poolPumpOnTime.StateTopic ? _poolPumpOnTime : _poolPumpOffTime;
-                    if (HomeAssistantTime.TryParse(payload, out _, out _))
+                    if (TryParseScheduleTime(payload, out _, out _))
                     {
                         target.SetState(payload);
                     }
@@ -413,7 +413,7 @@ namespace PoolMonitor
 
         private static void SetPoolPumpScheduleTime(HomeAssistantTime entity, string label, string payload)
         {
-            if (!HomeAssistantTime.TryParse(payload, out _, out _))
+            if (!TryParseScheduleTime(payload, out _, out _))
             {
                 Console.WriteLine("Ignoring invalid pool pump " + label + "-time: '" + payload + "'");
                 return;
@@ -421,6 +421,64 @@ namespace PoolMonitor
 
             entity.PublishState(payload);
             Console.WriteLine("Pool pump " + label + "-time set to " + payload);
+        }
+
+        /// <summary>
+        /// Parses a Home Assistant time string (HH:MM:SS, or H:MM / HH:MM) into an hour and minute.
+        /// The library's own parser is private, so this mirrors its accepted formats: whitespace is
+        /// trimmed, fractional seconds are ignored, and the hour must be 0-23 with minute and second
+        /// 0-59. The seconds are validated but not returned, since the schedule works in minutes.
+        /// </summary>
+        private static bool TryParseScheduleTime(string text, out int hour, out int minute)
+        {
+            hour = 0;
+            minute = 0;
+
+            if (string.IsNullOrEmpty(text))
+            {
+                return false;
+            }
+
+            string[] parts = text.Trim().Split(':');
+            if (parts.Length < 2 || parts.Length > 3)
+            {
+                return false;
+            }
+
+            int parsedHour;
+            int parsedMinute;
+            int parsedSecond = 0;
+
+            if (!int.TryParse(parts[0], out parsedHour) || !int.TryParse(parts[1], out parsedMinute))
+            {
+                return false;
+            }
+
+            if (parts.Length == 3)
+            {
+                // Ignore any fractional seconds (for example, "07:30:15.250").
+                string secondText = parts[2];
+                int dot = secondText.IndexOf('.');
+                if (dot >= 0)
+                {
+                    secondText = secondText.Substring(0, dot);
+                }
+
+                if (!int.TryParse(secondText, out parsedSecond))
+                {
+                    return false;
+                }
+            }
+
+            if (parsedHour < 0 || parsedHour > 23 || parsedMinute < 0 || parsedMinute > 59
+                || parsedSecond < 0 || parsedSecond > 59)
+            {
+                return false;
+            }
+
+            hour = parsedHour;
+            minute = parsedMinute;
+            return true;
         }
     }
 }

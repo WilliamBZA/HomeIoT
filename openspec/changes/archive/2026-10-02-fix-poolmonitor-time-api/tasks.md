@@ -1,0 +1,25 @@
+# Tasks
+
+Notes for whoever applies this change:
+
+- Build with Visual Studio 18's MSBuild; the nanoFramework targets are installed there. From the repo root (Git Bash):
+  `"/c/Program Files/Microsoft Visual Studio/18/Community/MSBuild/Current/Bin/MSBuild.exe" <project-or-slnx> -nologo -v:minimal -p:Configuration=Debug`
+  "0 errors and 0 warnings" means that command prints no `error` or `warning` lines and exits 0.
+- Edit only `PoolMonitor/Program.cs`. Do not touch the Home Assistant library (another repository), `Reliability`, or the other projects.
+- Match `PoolMonitor`'s existing style: LF line endings in `.cs`, braces on every `if`, `if/else` chains rather than string `switch`, concatenation rather than interpolation for new code.
+- Neither group needs new documentation: `PoolMonitor` has no README and the behavior it documents does not change.
+
+## 1. Adapt PoolMonitor to the Time entity API
+
+- [x] 1.1 In `PoolMonitor/Program.cs`, replace the `DefaultPoolPumpOnTime`/`DefaultPoolPumpOffTime` `const string` values with `static readonly TimeSpan` fields (`new TimeSpan(11, 0, 0)` and `new TimeSpan(13, 0, 0)`), keep their names, and leave the two `AddTime(...)` calls passing them (design D3). Verify: rebuilding `PoolMonitor/PoolMonitor.nfproj` no longer reports the two `CS1503` errors at the `AddTime` lines, and reading `HomeAssistantTime.Format` in the library confirms those values format as `11:00:00` and `13:00:00`.
+- [x] 1.2 Add the private `TryParseScheduleTime(string text, out int hour, out int minute)` helper to `PoolMonitor` (design D2): null/empty and unparseable input return false; trim; split on `:` into 2 or 3 parts; `int.TryParse` the hour and minute; for a third part drop anything from the first `.`, `int.TryParse` the seconds and validate them without returning them; require hour 0-23 and minute and second 0-59. Replace the four `HomeAssistantTime.TryParse(...)` calls (the two in `RunPoolPumpScheduleTick`, the one in the retained-state resync and the one in `SetPoolPumpScheduleTime`) with it, keeping each call's surrounding logic exactly as it is. Verify: `grep -n "HomeAssistantTime.TryParse" PoolMonitor/Program.cs` prints nothing, and `PoolMonitor/PoolMonitor.nfproj` builds with 0 errors and 0 warnings.
+- [x] 1.3 Check the helper against the library's parser with a throwaway desktop check outside the repo (a `dotnet` console project in the scratchpad, not committed): copy `HomeAssistantTime`'s private `TryParse` and the new helper into it and compare their accept/reject result and hour and minute across at least `07:30:00`, `7:30`, `11:00`, `23:59:59`, `00:00`, `24:00`, `12:60`, `12:30:60`, `12:30:15.250`, ` 08:05 `, `-1:30`, `12`, `12:3x`, `abc`, an empty string and `null`. Verify: all inputs agree. If any differ, fix the helper (the library is the reference) and rerun.
+- [x] 1.4 Review `git diff PoolMonitor` and confirm that it touches only: the two default fields, the new helper, and the four call sites; that `IsWithinPoolPumpSchedule`, the relay handling and the message routing are unchanged; and that the file has LF endings and no stray whitespace changes (`git diff --stat` shows a small change to one file, `git ls-files --eol PoolMonitor/Program.cs` shows `w/lf`). Verify: the diff contains nothing outside that list.
+
+## 2. Every project builds
+
+- [x] 2.1 Record which library commit the build is against (`git -C ../nanoFramework.IoT.Device log -1 --format=%h` from the repo root; `2b490ecef` when this was planned) and that its working tree is clean. If it is newer, read what changed in `devices/HomeAssistant` before going on, and stop to re-plan if it touches the Time entity or anything the other projects use. Verify: the commit hash and tree state are written down in the task's completion note.
+  - *Completion note:* library at `2b490ecef` ("Do not allow negative timespan values", branch `add-time-to-ha`), working tree clean. Same commit as planned, so no re-plan needed.
+- [x] 2.2 Build each project on its own: `Reliability`, `AlarmSilencer`, `AlarmStatus`, `GateSensor`, `GeyserMonitor`, `PoolMonitor`, `PanicTrigger`. Verify: every one prints its `->` output line, and none prints an `error` or `warning`; any failure is reported with its first error line rather than fixed outside this change's scope.
+- [x] 2.3 Build the whole solution: `HomeIoT.slnx`. Verify: exit code 0 with 0 errors and 0 warnings, and the output has an `->` line for the library, `Reliability` and all six device projects.
+- [ ] 2.4 **(hardware, owner)** Optional on-device smoke test of `PoolMonitor` after flashing: Home Assistant shows the two Pool Pump time entities at `11:00:00` and `13:00:00`; setting new times from Home Assistant is reflected in the log (`Pool pump on-time set to ...`); `mosquitto_pub` of an invalid time to a schedule command topic logs `Ignoring invalid pool pump ...`; and the relay follows the schedule window after a reboot. Verify: each of those is seen; note that an invalid payload may stall the schedule until the next valid time (see the last risk in `design.md`), which is existing behavior and not a failure of this change.
